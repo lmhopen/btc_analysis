@@ -51,6 +51,9 @@ typedef struct {
     char upper_2_0[32];
     char lower_2_0[32];
     char deviation[32];
+    // 指标值
+    char mvrv[32];
+    char close_minus_cvdd[32];
 } InfoBox;
 
 /* ========== 函数声明 ========== */
@@ -82,7 +85,23 @@ void crosshair_update(Crosshair* ch, const ChartCoords* coords);
 void crosshair_draw(const Crosshair* ch, const ChartCoords* coords);
 
 /**
- * @brief 绘制信息框
+ * @brief 绘制信息框（含指标）
+ * @param ch 十字线指针
+ * @param dataset 数据集
+ * @param channel 回归通道
+ * @param mvrv MVRV数据（可选）
+ * @param cmcvdd Close-minus-CVDD数据（可选）
+ * @param coords 坐标转换器
+ */
+void crosshair_draw_info_ex(const Crosshair* ch,
+                           const Dataset* dataset,
+                           const RegressionChannel* channel,
+                           const IndicatorSeries* mvrv,
+                           const IndicatorSeries* cmcvdd,
+                           const ChartCoords* coords);
+
+/**
+ * @brief 绘制信息框（无指标，兼容旧调用）
  * @param ch 十字线指针
  * @param dataset 数据集
  * @param channel 回归通道
@@ -94,7 +113,23 @@ void crosshair_draw_info(const Crosshair* ch,
                          const ChartCoords* coords);
 
 /**
- * @brief 获取当前索引的信息框数据
+ * @brief 获取当前索引的信息框数据（含指标）
+ * @param index 数据索引
+ * @param dataset 数据集
+ * @param channel 回归通道
+ * @param mvrv MVRV数据（可选）
+ * @param cmcvdd Close-minus-CVDD数据（可选）
+ * @param info 信息框输出
+ */
+void crosshair_get_info_ex(int index,
+                           const Dataset* dataset,
+                           const RegressionChannel* channel,
+                           const IndicatorSeries* mvrv,
+                           const IndicatorSeries* cmcvdd,
+                           InfoBox* info);
+
+/**
+ * @brief 获取当前索引的信息框数据（无指标，兼容旧调用）
  * @param index 数据索引
  * @param dataset 数据集
  * @param channel 回归通道

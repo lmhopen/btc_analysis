@@ -22,13 +22,6 @@
 #define INITIAL_CAPACITY 200
 #define MAX_PATH_LEN 512
 
-/* ========== 周期类型 ========== */
-typedef enum {
-    PERIOD_DAILY = 0,
-    PERIOD_MONTHLY = 1,
-    PERIOD_QUARTERLY = 2
-} PeriodType;
-
 /* ========== 数据结构 ========== */
 
 /**
@@ -64,17 +57,6 @@ typedef struct {
     int end_year;               // 结束年份
     int end_month;              // 结束月份
 } DateFilter;
-
-/**
- * @brief 单指标时间序列数据
- * 从TXT文件加载，格式: YYYY-MM-DD,value（每行一条，无表头）
- */
-typedef struct {
-    char** dates;               // 日期字符串数组
-    double* values;             // 数值数组
-    int count;                  // 数据条数
-    int capacity;               // 数组容量
-} IndicatorSeries;
 
 /* ========== 函数声明 ========== */
 
@@ -149,60 +131,5 @@ double dataset_get_highest(const Dataset* dataset);
  * @return 最低价
  */
 double dataset_get_lowest(const Dataset* dataset);
-
-/**
- * @brief 将日线数据聚合为月线或季线
- * @param src 日线数据集
- * @param period 目标周期（PERIOD_DAILY/MONTHLY/QUARTERLY）
- * @return 聚合后的数据集，调用者负责释放
- */
-Dataset* dataset_aggregate_to_period(const Dataset* src, PeriodType period);
-
-/**
- * @brief 获取周期名称
- * @param period 周期类型
- * @return 周期名称字符串
- */
-const char* period_to_string(PeriodType period);
-
-/* ========== 指标时间序列函数 ========== */
-
-/**
- * @brief 创建空指标序列
- * @return 指标序列指针
- */
-IndicatorSeries* indicator_create(void);
-
-/**
- * @brief 释放指标序列
- * @param ind 指标序列指针
- */
-void indicator_free(IndicatorSeries* ind);
-
-/**
- * @brief 从TXT文件加载指标数据（格式: YYYY-MM-DD,value，无表头）
- * @param filepath TXT文件路径
- * @return 指标序列指针，失败返回NULL
- */
-IndicatorSeries* indicator_load_txt(const char* filepath);
-
-/**
- * @brief 获取指定日期的指标值
- * @param ind 指标序列
- * @param date 日期字符串 "YYYY-MM-DD"
- * @param out_value 输出值
- * @return 找到返回true
- */
-bool indicator_get_value(const IndicatorSeries* ind, const char* date, double* out_value);
-
-/**
- * @brief 获取指标最小值
- */
-double indicator_get_min(const IndicatorSeries* ind);
-
-/**
- * @brief 获取指标最大值
- */
-double indicator_get_max(const IndicatorSeries* ind);
 
 #endif /* DATA_H */

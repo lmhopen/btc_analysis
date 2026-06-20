@@ -20,10 +20,14 @@
 #include "network.h"
 
 /* ========== 常量定义 ========== */
-#define DATA_FILE "data/btc_historical_monthly.csv"
-#define DATA_FILE_ALT "../data/btc_historical_monthly.csv"
-#define DATA_FILE_PYTHON "D:/openskills/BTC/btc_historical_monthly.csv"
+#define DATA_FILE "data/btc_historical_daily.csv"
+#define DATA_FILE_ALT "../data/btc_historical_daily.csv"
+#define DATA_FILE_PYTHON "D:/openskills/BTC/btc_historical_daily.csv"
 #define OUTPUT_IMAGE "btc_chart.png"
+
+/* 指标数据文件 */
+#define MVRV_ZSCORE_FILE "data/mvrv_zscore.txt"
+#define CLOSE_MINUS_CVDD_FILE "data/btc_close_minus_cvdd.txt"
 
 /* ========== 全局变量 ========== */
 static bool g_auto_update = true;
@@ -56,7 +60,7 @@ void print_menu(void) {
     printf("     - Channel lines are straight on log scale\n");
     printf("     - Best for long-term trend analysis\n\n");
     
-    printf("  3. Bitcoin Full History K-Line + Channel (2010-2026)\n");
+    printf("  3. Bitcoin Full History K-Line + Channel (2017-2026)\n");
     printf("     - All historical data\n");
     printf("     - Log scale display\n\n");
     
@@ -74,7 +78,7 @@ void print_data_summary(const Dataset* dataset) {
     if (dataset == NULL || dataset->count == 0) {
         printf("No data loaded.\n");
     } else {
-        printf("\nMonthly Data:\n");
+        printf("\nDaily Data:\n");
         printf("   Records: %d\n", dataset->count);
         
         int start_year, end_year;
@@ -91,44 +95,70 @@ void print_data_summary(const Dataset* dataset) {
 /* ========== 图表显示函数 ========== */
 
 void show_chart(Dataset* full_dataset, int start_year, bool use_log_scale) {
-    // 筛选数据
-    Dataset* dataset = (start_year > 0) ? 
+    // 筛选每日数据
+    Dataset* daily_dataset = (start_year > 0) ? 
         dataset_filter_from_year(full_dataset, start_year) : full_dataset;
     
-    if (dataset == NULL || dataset->count == 0) {
+    if (daily_dataset == NULL || daily_dataset->count == 0) {
         printf("Error: No data available.\n");
         return;
     }
     
-    printf("\nLoading %d data points (%d to present)...\n", 
-           dataset->count, start_year > 0 ? start_year : 2010);
+    // 默认显示日线
+    PeriodType current_period = PERIOD_DAILY;
+    Dataset* display_dataset = daily_dataset;  // 日线直接使用
+    bool display_is_aggregated = false;
     
-    // 计算回归通道
+    // 计算初始回归通道
     RegressionChannel* channel = use_log_scale ? 
-        channel_calculate_log(dataset) : channel_calculate_linear(dataset);
+        channel_calculate_log(display_dataset) : channel_calculate_linear(display_dataset);
     
     if (channel == NULL) {
         printf("Error: Failed to calculate regression channel.\n");
-        if (dataset != full_dataset) dataset_free(dataset);
+        if (daily_dataset != full_dataset) dataset_free(daily_dataset);
         return;
     }
     
+    printf("\nLoading %d %s data points...\n", display_dataset->count, period_to_string(current_period));
     channel_print_params(channel);
-    channel_print_last_values(channel, dataset);
+    channel_print_last_values(channel, display_dataset);
+    
+    // 加载指标数据
+    IndicatorSeries* mvrv = indicator_load_txt(MVRV_ZSCORE_FILE);
+    if (mvrv != NULL) {
+        printf("已加载 MVRV Z-Score: %d 条\n", mvrv->count);
+    } else {
+        printf("MVRV Z-Score 数据不可用\n");
+    }
+    IndicatorSeries* cmcvdd = indicator_load_txt(CLOSE_MINUS_CVDD_FILE);
+    if (cmcvdd != NULL) {
+        printf("已加载 Close-minus-CVDD: %d 条\n", cmcvdd->count);
+    } else {
+        printf("Close-minus-CVDD 数据不可用\n");
+    }
     
     // 初始化图表
     ChartState* chart = chart_init();
     if (chart == NULL) {
         printf("Error: Failed to initialize chart.\n");
         channel_free(channel);
-        if (dataset != full_dataset) dataset_free(dataset);
+        indicator_free(mvrv);
+        indicator_free(cmcvdd);
+        if (daily_dataset != full_dataset) dataset_free(daily_dataset);
         return;
     }
     
+    // 挂载指标数据到图表状态
+    chart->mvrv = mvrv;
+    chart->cmcvdd = cmcvdd;
+    chart->current_period = PERIOD_DAILY;
+    chart->view_count = display_dataset->count;  // 初始显示全部数据
+    
     printf("\n============================================================\n");
     printf("Chart Controls:\n");
-    printf("  - Double-click: Toggle crosshair on/off\n");
+    printf("  - Click: 日线/月线/季线 - Switch chart period\n");
     printf("  - Move mouse: View price and indicator data\n");
+    printf("  - Up/Down arrow: Zoom in/out (fewer/more candles)\n");
     printf("  - Resize window: Drag window corners\n");
     printf("  - Press ESC: Close chart and return to menu\n");
     printf("============================================================\n\n");
@@ -150,8 +180,80 @@ void show_chart(Dataset* full_dataset, int start_year, bool use_log_scale) {
         int current_width = GetScreenWidth();
         int current_height = GetScreenHeight();
         
+        // --- 检查周期切换点击 ---
+        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+            int new_period = chart_handle_period_click(chart, GetMousePosition());
+            if (new_period >= 0 && new_period != current_period) {
+                // 切换到新周期
+                current_period = (PeriodType)new_period;
+                chart->current_period = current_period;
+                
+                // 释放旧的聚合数据和通道
+                if (display_is_aggregated && display_dataset != NULL) {
+                    dataset_free(display_dataset);
+                }
+                channel_free(channel);
+                
+                // 聚合新周期数据
+                if (current_period == PERIOD_DAILY) {
+                    display_dataset = daily_dataset;
+                    display_is_aggregated = false;
+                } else {
+                    display_dataset = dataset_aggregate_to_period(daily_dataset, current_period);
+                    display_is_aggregated = true;
+                    if (display_dataset == NULL || display_dataset->count == 0) {
+                        printf("Error: 聚合数据失败，回到日线\n");
+                        current_period = PERIOD_DAILY;
+                        chart->current_period = PERIOD_DAILY;
+                        display_dataset = daily_dataset;
+                        display_is_aggregated = false;
+                    }
+                }
+                
+                // 重新计算回归通道
+                channel = use_log_scale ?
+                    channel_calculate_log(display_dataset) :
+                    channel_calculate_linear(display_dataset);
+                
+                if (channel == NULL) {
+                    printf("Error: 通道计算失败，回到日线\n");
+                    channel = use_log_scale ?
+                        channel_calculate_log(daily_dataset) :
+                        channel_calculate_linear(daily_dataset);
+                    current_period = PERIOD_DAILY;
+                    chart->current_period = PERIOD_DAILY;
+                    if (display_is_aggregated) dataset_free(display_dataset);
+                    display_dataset = daily_dataset;
+                    display_is_aggregated = false;
+                }
+                
+                printf("\n切换到 %s (%d 条)\n", period_to_string(current_period), display_dataset->count);
+                
+                // 重置缩放：显示新周期的全部数据
+                chart->view_count = display_dataset->count;
+                
+                // 强制重算坐标
+                coords_initialized = false;
+                saved_image = false;
+                auto_save_done = false;
+                frame_count = 0;
+            }
+        }
+        
+        // --- 缩放控制（方向键上/下改变可见K线数量） ---
+        if (IsKeyPressed(KEY_UP)) {
+            chart_zoom_in(chart);
+            coords_initialized = false;
+        }
+        if (IsKeyPressed(KEY_DOWN)) {
+            if (chart->view_count < display_dataset->count) {
+                chart_zoom_out(chart);
+            }
+            coords_initialized = false;
+        }
+        
         if (!coords_initialized || current_width != last_width || current_height != last_height) {
-            coords = chart_calc_coords(dataset, channel, use_log_scale);
+            coords = chart_calc_coords(display_dataset, channel, use_log_scale, mvrv, cmcvdd, chart->view_count);
             last_width = current_width;
             last_height = current_height;
             coords_initialized = true;
@@ -162,7 +264,7 @@ void show_chart(Dataset* full_dataset, int start_year, bool use_log_scale) {
         }
         
         if (g_save_image && !saved_image && frame_count == 3) {
-            if (chart_save_to_file(dataset, channel, use_log_scale, OUTPUT_IMAGE)) {
+            if (chart_save_to_file(display_dataset, channel, use_log_scale, OUTPUT_IMAGE, mvrv, cmcvdd, chart->view_count)) {
                 printf("\nChart auto-saved to: %s\n", OUTPUT_IMAGE);
             } else {
                 printf("\nFailed to save chart.\n");
@@ -172,7 +274,7 @@ void show_chart(Dataset* full_dataset, int start_year, bool use_log_scale) {
         }
         
         if (IsKeyPressed(KEY_S) && g_save_image && saved_image && !auto_save_done && frame_count > 10) {
-            if (chart_save_to_file(dataset, channel, use_log_scale, OUTPUT_IMAGE)) {
+            if (chart_save_to_file(display_dataset, channel, use_log_scale, OUTPUT_IMAGE, mvrv, cmcvdd, chart->view_count)) {
                 printf("\nChart saved to: %s\n", OUTPUT_IMAGE);
             } else {
                 printf("\nFailed to save chart.\n");
@@ -181,16 +283,17 @@ void show_chart(Dataset* full_dataset, int start_year, bool use_log_scale) {
         
         BeginDrawing();
         
-        chart_draw(chart, dataset, channel, &coords);
+        chart_draw(chart, display_dataset, channel, &coords);
+        chart_draw_period_buttons(chart);
         
         if (crosshair != NULL) {
             crosshair_draw(crosshair, &coords);
-            crosshair_draw_info(crosshair, dataset, channel, &coords);
+            crosshair_draw_info_ex(crosshair, display_dataset, channel, mvrv, cmcvdd, &coords);
         }
         
         int font_help = last_height * 0.012;
         if (font_help < 10) font_help = 14;
-        DrawText("Press S to save | ESC to close | Double-click for crosshair | Resize to adjust", 
+        DrawText("ESC to close | Up/Down: zoom candles | Click period buttons to switch", 
                  10, last_height - font_help - 10, font_help, ((Color){ 150, 150, 150, 255 }));
         
         EndDrawing();
@@ -201,7 +304,10 @@ void show_chart(Dataset* full_dataset, int start_year, bool use_log_scale) {
     crosshair_free(crosshair);
     chart_close(chart);
     channel_free(channel);
-    if (dataset != full_dataset) dataset_free(dataset);
+    indicator_free(mvrv);
+    indicator_free(cmcvdd);
+    if (display_is_aggregated && display_dataset != NULL) dataset_free(display_dataset);
+    if (daily_dataset != full_dataset) dataset_free(daily_dataset);
     
     printf("\nChart closed.\n");
 }
@@ -264,10 +370,24 @@ int main(int argc, char* argv[]) {
     
     if (dataset == NULL) {
         printf("\nError: Failed to load data file.\n");
-        printf("Please ensure 'btc_historical_monthly.csv' is in the data/ directory.\n");
+        printf("Please ensure 'btc_historical_daily.csv' is in the data/ directory.\n");
         printf("Or run with network enabled to fetch data from Binance API.\n");
         return 1;
     }
+    
+    // 更新链上指标数据
+    if (g_auto_update) {
+        update_indicators();
+        // 更新后计算 BTC 收盘价 - CVDD 差值（有更新才计算）
+        compute_close_minus_cvdd();
+        // 更新后计算 C-CVDD 历史百分位（有更新才计算）
+        compute_cmcvdd_percentile();
+    }
+    
+    printf("\n--- 导出CSV数据切片 ---\n");
+    export_csv_slice("data/btc_historical_daily.csv",
+                     "data/btc_historical_daily.txt", 2);
+    printf("------------------------\n");
     
     dataset_print_info(dataset);
     

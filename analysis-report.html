@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BTC-C 项目深度分析报告</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;900&family=JetBrains+Mono:wght@400;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-primary: #0b0e14;
+  --bg-secondary: #111620;
+  --bg-card: #161c2b;
+  --bg-card-hover: #1a2235;
+  --orange: #f7931a;
+  --orange-dim: rgba(247,147,26,0.15);
+  --orange-glow: rgba(247,147,26,0.3);
+  --green: #00d4aa;
+  --red: #ff4757;
+  --cyan: #45aaf2;
+  --purple: #a55eea;
+  --text-primary: #e8edf5;
+  --text-secondary: #8892a4;
+  --text-muted: #4a5568;
+  --border-color: rgba(247,147,26,0.12);
+  --radius: 16px;
+  --radius-sm: 10px;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: 'DM Sans', sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.7;
+  overflow-x: hidden;
+}
+::selection { background: var(--orange); color: #000; }
+
+/* ─── NAV ─── */
+nav {
+  position: fixed; top:0; left:0; right:0; z-index:100;
+  backdrop-filter: blur(24px) saturate(1.8);
+  -webkit-backdrop-filter: blur(24px) saturate(1.8);
+  background: rgba(11,14,20,0.75);
+  border-bottom: 1px solid rgba(247,147,26,0.08);
+  padding: 0 2rem;
+  height: 60px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+nav .logo {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: var(--orange);
+  letter-spacing: -0.02em;
+}
+nav .logo span { color: var(--text-primary); }
+nav .nav-links { display: flex; gap: 0.25rem; }
+nav .nav-links a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 0.8rem;
+  padding: 0.4rem 0.85rem;
+  border-radius: 8px;
+  transition: all 0.2s;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+nav .nav-links a:hover { color: var(--text-primary); background: rgba(247,147,26,0.08); }
+
+/* ─── HERO ─── */
+.hero {
+  min-height: 100vh;
+  display: flex; flex-direction: column; justify-content: center;
+  padding: 6rem 2rem 4rem;
+  position: relative;
+  overflow: hidden;
+}
+.hero::before {
+  content: '';
+  position: absolute; top:-50%; left:-30%;
+  width: 100%; height: 120%;
+  background: radial-gradient(ellipse at 30% 50%, rgba(247,147,26,0.06) 0%, transparent 60%),
+              radial-gradient(ellipse at 70% 30%, rgba(0,212,170,0.04) 0%, transparent 50%);
+  pointer-events: none;
+}
+.hero-grid {
+  position: absolute; inset:0;
+  background-image:
+    linear-gradient(rgba(247,147,26,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(247,147,26,0.03) 1px, transparent 1px);
+  background-size: 60px 60px;
+  pointer-events: none;
+}
+.hero-content { position:relative; z-index:2; max-width: 1100px; margin:0 auto; width:100%; }
+.hero-badge {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  background: var(--orange-dim);
+  border: 1px solid rgba(247,147,26,0.2);
+  padding: 0.3rem 1rem;
+  border-radius: 100px;
+  font-size: 0.75rem;
+  color: var(--orange);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 1.5rem;
+}
+.hero-badge::before {
+  content: '';
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--orange);
+  box-shadow: 0 0 8px var(--orange-glow);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+@keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+.hero h1 {
+  font-family: 'Outfit', sans-serif;
+  font-size: clamp(2.8rem, 7vw, 5.5rem);
+  font-weight: 900;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  margin-bottom: 0.5rem;
+}
+.hero h1 .highlight { background: linear-gradient(135deg, var(--orange), #ffb347); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+.hero h1 .accent { color: var(--text-primary); }
+.hero-sub {
+  font-size: clamp(1rem, 2vw, 1.25rem);
+  color: var(--text-secondary);
+  max-width: 640px;
+  margin: 1rem 0 2rem;
+  line-height: 1.6;
+}
+.hero-stats {
+  display: flex; flex-wrap: wrap; gap: 2rem;
+  margin-top: 2rem;
+}
+.hero-stat {
+  display: flex; flex-direction: column;
+}
+.hero-stat-value {
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.hero-stat-label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.hero-stat-value .orange { color: var(--orange); }
+.hero-stat-value .green { color: var(--green); }
+
+/* ─── SECTION ─── */
+section { padding: 5rem 2rem; max-width: 1200px; margin:0 auto; }
+.section-header {
+  margin-bottom: 3rem;
+  position: relative;
+}
+.section-tag {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--orange);
+  margin-bottom: 0.5rem;
+  display: flex; align-items: center; gap: 0.5rem;
+}
+.section-tag::after {
+  content: '';
+  flex:1; height: 1px;
+  background: linear-gradient(90deg, rgba(247,147,26,0.3), transparent);
+}
+.section-title {
+  font-family: 'Outfit', sans-serif;
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+.section-desc {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  margin-top: 0.75rem;
+  max-width: 600px;
+}
+
+/* ─── ARCH TREE ─── */
+.arch-tree {
+  background: var(--bg-secondary);
+  border: 1px solid rgba(247,147,26,0.08);
+  border-radius: var(--radius);
+  padding: 2rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  line-height: 1.9;
+  overflow-x: auto;
+  position: relative;
+}
+.arch-tree .tree-line { white-space: pre; }
+.arch-tree .tree-dir { color: var(--orange); font-weight: 600; }
+.arch-tree .tree-file { color: var(--text-primary); }
+.arch-tree .tree-comment { color: var(--text-muted); font-style: italic; }
+.arch-tree .tree-py { color: var(--green); }
+.arch-tree .tree-num { color: var(--purple); }
+.arch-tree::before {
+  content: 'project-structure';
+  position: absolute; top:-0.6rem; left:1.5rem;
+  background: var(--bg-primary);
+  padding: 0 0.6rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  border-radius: 4px;
+}
+
+/* ─── MODULE GRID ─── */
+.modules-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1.25rem;
+}
+.module-card {
+  background: var(--bg-card);
+  border: 1px solid rgba(247,147,26,0.06);
+  border-radius: var(--radius);
+  padding: 1.75rem;
+  transition: all 0.3s ease;
+  cursor: default;
+  position: relative;
+  overflow: hidden;
+}
+.module-card::before {
+  content: '';
+  position: absolute; top:0; left:0; right:0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--orange), transparent);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.module-card:hover::before { opacity: 1; }
+.module-card:hover {
+  background: var(--bg-card-hover);
+  border-color: rgba(247,147,26,0.15);
+  transform: translateY(-2px);
+}
+.module-card-icon {
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.1rem;
+  margin-bottom: 1rem;
+  border: 1px solid rgba(247,147,26,0.12);
+  background: var(--orange-dim);
+}
+.module-card h3 {
+  font-family: 'Outfit', sans-serif;
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+  letter-spacing: -0.01em;
+}
+.module-card .module-lines {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+  font-family: 'JetBrains Mono', monospace;
+}
+.module-card p {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+.module-card .module-tags {
+  display: flex; flex-wrap: wrap; gap: 0.35rem;
+  margin-top: 0.75rem;
+}
+.module-card .tag {
+  font-size: 0.65rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 100px;
+  background: rgba(247,147,26,0.06);
+  border: 1px solid rgba(247,147,26,0.1);
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+/* ─── DATA FLOW ─── */
+.flow-container {
+  background: var(--bg-secondary);
+  border: 1px solid rgba(247,147,26,0.08);
+  border-radius: var(--radius);
+  padding: 2.5rem 2rem;
+  overflow-x: auto;
+}
+.flow-diagram {
+  display: flex; align-items: center; gap: 0;
+  min-width: 700px;
+}
+.flow-node {
+  flex-shrink: 0;
+  padding: 0.8rem 1.2rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-align: center;
+  min-width: 100px;
+  position: relative;
+}
+.flow-node .fn-sub {
+  font-weight: 400;
+  font-size: 0.65rem;
+  opacity: 0.7;
+  display: block;
+  margin-top: 0.25rem;
+}
+.flow-node.python { background: rgba(0,212,170,0.12); border:1px solid rgba(0,212,170,0.2); color: var(--green); }
+.flow-node.data { background: rgba(69,170,242,0.1); border:1px solid rgba(69,170,242,0.15); color: var(--cyan); }
+.flow-node.calc { background: rgba(165,92,234,0.1); border:1px solid rgba(165,92,234,0.15); color: var(--purple); }
+.flow-node.vis { background: var(--orange-dim); border:1px solid rgba(247,147,26,0.2); color: var(--orange); }
+.flow-arrow {
+  flex-shrink: 0;
+  padding: 0 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+.flow-diagram-vertical { display: none; }
+
+/* ─── HIGHLIGHTS ─── */
+.highlights-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+}
+.highlight-card {
+  padding: 1.75rem;
+  border-radius: var(--radius);
+  border: 1px solid;
+}
+.highlight-card.good {
+  background: rgba(0,212,170,0.04);
+  border-color: rgba(0,212,170,0.12);
+}
+.highlight-card.good .hc-icon { color: var(--green); }
+.highlight-card.warn {
+  background: rgba(255,71,87,0.04);
+  border-color: rgba(255,71,87,0.12);
+}
+.highlight-card.warn .hc-icon { color: var(--red); }
+.highlight-card h4 {
+  font-family: 'Outfit', sans-serif;
+  font-size: 0.95rem;
+  font-weight: 600;
+  display: flex; align-items: center; gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.highlight-card ul {
+  list-style: none;
+  display: flex; flex-direction: column; gap: 0.5rem;
+}
+.highlight-card ul li {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  padding-left: 1.2rem;
+  position: relative;
+  line-height: 1.5;
+}
+.highlight-card.good ul li::before {
+  content: '+'; position: absolute; left:0;
+  color: var(--green); font-weight: 700;
+}
+.highlight-card.warn ul li::before {
+  content: '!'; position: absolute; left:0;
+  color: var(--red); font-weight: 700;
+}
+
+/* ─── METRICS ─── */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2.5rem;
+}
+.metric-card {
+  background: var(--bg-card);
+  border: 1px solid rgba(247,147,26,0.06);
+  border-radius: var(--radius-sm);
+  padding: 1.25rem;
+  text-align: center;
+}
+.metric-value {
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.metric-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+  font-weight: 500;
+}
+
+/* ─── TABLE ─── */
+.table-wrap {
+  overflow-x: auto;
+  background: var(--bg-secondary);
+  border: 1px solid rgba(247,147,26,0.08);
+  border-radius: var(--radius);
+  padding: 0;
+}
+table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+thead th {
+  text-align: left;
+  padding: 0.85rem 1.25rem;
+  font-family: 'Outfit', sans-serif;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-bottom: 1px solid rgba(247,147,26,0.08);
+  background: rgba(247,147,26,0.03);
+}
+tbody td {
+  padding: 0.75rem 1.25rem;
+  color: var(--text-secondary);
+  border-bottom: 1px solid rgba(247,147,26,0.04);
+}
+tbody tr:hover td { background: rgba(247,147,26,0.03); }
+tbody td:first-child { font-weight: 500; color: var(--text-primary); font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; }
+
+/* ─── RELATION ─── */
+.relation-box {
+  background: linear-gradient(135deg, var(--bg-secondary), var(--bg-card));
+  border: 1px solid rgba(247,147,26,0.08);
+  border-radius: var(--radius);
+  padding: 2rem;
+  position: relative;
+}
+.relation-box p {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.7;
+}
+.relation-box strong { color: var(--text-primary); }
+
+/* ─── FOOTER ─── */
+footer {
+  text-align: center;
+  padding: 3rem 2rem;
+  border-top: 1px solid rgba(247,147,26,0.06);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+/* ─── RESPONSIVE ─── */
+@media (max-width: 768px) {
+  nav { padding: 0 1rem; }
+  nav .nav-links { display: none; }
+  .hero { padding: 5rem 1.25rem 3rem; }
+  section { padding: 3rem 1.25rem; }
+  .modules-grid { grid-template-columns: 1fr; }
+  .highlights-grid { grid-template-columns: 1fr; }
+  .hero-stats { gap: 1.25rem; }
+  .flow-node { padding: 0.6rem 0.8rem; font-size: 0.7rem; min-width: 70px; }
+  .flow-arrow { padding: 0 0.25rem; font-size: 0.55rem; }
+  .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ─── ANIMATIONS ─── */
+.fade-in {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+.fade-in.visible { opacity: 1; transform: translateY(0); }
+.fade-in-d1 { transition-delay:0.1s; }
+.fade-in-d2 { transition-delay:0.2s; }
+.fade-in-d3 { transition-delay:0.3s; }
+
+.btc-ticker {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  border-left: 2px solid rgba(247,147,26,0.2);
+  padding-left: 0.75rem;
+  margin-top: 0.5rem;
+}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="logo">BTC<span>-C</span></div>
+  <div class="nav-links">
+    <a href="#overview">概览</a>
+    <a href="#architecture">架构</a>
+    <a href="#modules">模块</a>
+    <a href="#flow">数据流</a>
+    <a href="#highlights">评价</a>
+    <a href="#pipeline">管道</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero" id="overview">
+  <div class="hero-grid"></div>
+  <div class="hero-content">
+    <div class="hero-badge">Deep Analysis Report</div>
+    <h1>
+      <span class="highlight">Bitcoin</span><br>
+      <span class="accent">Analysis Toolkit</span>
+    </h1>
+    <p class="hero-sub">纯 C 语言构建的高性能比特币价格分析引擎，集成回归通道、链上指标与交互式 K 线可视化。</p>
+    <div class="btc-ticker">
+      <span id="ticker-date">2026-06-11</span> &nbsp;·&nbsp; Close: <span id="ticker-price">$62,914.50</span> &nbsp;·&nbsp; Data: <span id="ticker-records">3,449</span> daily bars
+    </div>
+    <div class="hero-stats">
+      <div class="hero-stat">
+        <span class="hero-stat-value">~<span class="orange">2,800</span></span>
+        <span class="hero-stat-label">Lines of C</span>
+      </div>
+      <div class="hero-stat">
+        <span class="hero-stat-value">~<span class="green">1,000</span></span>
+        <span class="hero-stat-label">Lines of Python</span>
+      </div>
+      <div class="hero-stat">
+        <span class="hero-stat-value"><span class="orange">6</span></span>
+        <span class="hero-stat-label">C Modules</span>
+      </div>
+      <div class="hero-stat">
+        <span class="hero-stat-value"><span class="green">5</span></span>
+        <span class="hero-stat-label">Python Scripts</span>
+      </div>
+      <div class="hero-stat">
+        <span class="hero-stat-value"><span class="orange">9</span></span>
+        <span class="hero-stat-label">Channel Lines</span>
+      </div>
+      <div class="hero-stat">
+        <span class="hero-stat-value"><span class="green">2017</span>–<span class="orange">2026</span></span>
+        <span class="hero-stat-label">Data Span</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SECTION: OVERVIEW -->
+<section>
+  <div class="section-header fade-in">
+    <div class="section-tag">Overview</div>
+    <h2 class="section-title">项目概览</h2>
+    <p class="section-desc">BTC-C 是一个将 Python 原型重写为高性能 C 语言实现的比特币技术分析工具，对标专业交易软件。</p>
+  </div>
+  <div class="metrics-grid fade-in fade-in-d1">
+    <div class="metric-card"><div class="metric-value">MIT</div><div class="metric-label">License</div></div>
+    <div class="metric-card"><div class="metric-value">raylib</div><div class="metric-label">Graphics Engine</div></div>
+    <div class="metric-card"><div class="metric-value">C99</div><div class="metric-label">C Standard</div></div>
+    <div class="metric-card"><div class="metric-value">Windows/macOS/Linux</div><div class="metric-label">Platform</div></div>
+    <div class="metric-card"><div class="metric-value">~5–10 MB</div><div class="metric-label">Memory Usage</div></div>
+    <div class="metric-card"><div class="metric-value">~200 KB</div><div class="metric-label">Binary Size</div></div>
+  </div>
+</section>
+
+<!-- SECTION: ARCHITECTURE -->
+<section id="architecture">
+  <div class="section-header fade-in">
+    <div class="section-tag">Architecture</div>
+    <h2 class="section-title">项目架构</h2>
+    <p class="section-desc">清晰的模块化设计，C 引擎 + Python 管道的混合架构。</p>
+  </div>
+  <div class="arch-tree fade-in fade-in-d1">
+<div class="tree-line"><span class="tree-dir">BTC-C/</span> <span class="tree-comment">← 高性能 C 版本</span></div>
+<div class="tree-line">├── <span class="tree-dir">src/</span></div>
+<div class="tree-line">│   ├── <span class="tree-file">main.c</span>        <span class="tree-comment"> (445行) 主入口 · 菜单 · 图表渲染循环 · 命令行参数</span></div>
+<div class="tree-line">│   ├── <span class="tree-file">data.c/h</span>      <span class="tree-comment"> (523行) CSV解析 · Candle结构 · Dataset管理 · 周期聚合</span></div>
+<div class="tree-line">│   ├── <span class="tree-file">calculate.c/h</span>  <span class="tree-comment"> (336行) 对数/线性回归 · 9通道线 · 偏离度分析</span></div>
+<div class="tree-line">│   ├── <span class="tree-file">chart.c/h</span>      <span class="tree-comment"> (847行) raylib绘制 · K线 · 坐标转换 · PNG保存</span></div>
+<div class="tree-line">│   ├── <span class="tree-file">crosshair.c/h</span>  <span class="tree-comment"> (295行) 双击十字线 · 信息悬浮框 · 跨图延伸</span></div>
+<div class="tree-line">│   └── <span class="tree-file">network.c/h</span>    <span class="tree-comment"> (186行) Python脚本桥 · 数据更新协调</span></div>
+<div class="tree-line">├── <span class="tree-dir">data/</span></div>
+<div class="tree-line">│   ├── <span class="tree-file">btc_historical_daily.csv</span>  <span class="tree-comment">  (3449行日线数据)</span></div>
+<div class="tree-line">│   ├── <span class="tree-file">update_data.py</span>             <span class="tree-py"> (286行) Gate.io/OKX数据更新</span></div>
+<div class="tree-line">│   ├── <span class="tree-file">update_indicators.py</span>       <span class="tree-py"> (259行) Playwright爬取MVRV/CVDD</span></div>
+<div class="tree-line">│   ├── <span class="tree-file">compute_close_minus_cvdd.py</span> <span class="tree-py"> (168行) 偏离百分比计算</span></div>
+<div class="tree-line">│   └── <span class="tree-file">compute_cmcvdd_percentile.py</span><span class="tree-py"> (158行) 历史百分位</span></div>
+<div class="tree-line">├── <span class="tree-file">Makefile</span> / <span class="tree-file">build.bat</span> / <span class="tree-file">build.sh</span></div>
+<div class="tree-line">├── <span class="tree-file">btc_analysis.exe</span>       <span class="tree-comment"> 已编译二进制</span></div>
+<div class="tree-line">└── <span class="tree-file">btc_chart.png</span>          <span class="tree-comment"> 自动保存的K线图</span></div>
+<div class="tree-line"> </div>
+<div class="tree-line"><span class="tree-dir">BTC/</span> <span class="tree-comment">← Python 原型版本 (独立项目)</span></div>
+<div class="tree-line">├── <span class="tree-file">analyze_btc.py</span> / <span class="tree-file">menu.py</span> / <span class="tree-file">crosshair.py</span></div>
+<div class="tree-line">└── <span class="tree-file">btc_*_regression*.py</span>    <span class="tree-comment"> (5个独立分析脚本 + 图表示例)</span></div>
+  </div>
+</section>
+
+<!-- SECTION: MODULES -->
+<section id="modules">
+  <div class="section-header fade-in">
+    <div class="section-tag">Core Modules</div>
+    <h2 class="section-title">核心模块深度解析</h2>
+    <p class="section-desc">6 个 C 语言模块各司其职，构建完整的数据分析管线。</p>
+  </div>
+  <div class="modules-grid">
+    <div class="module-card fade-in fade-in-d1">
+      <div class="module-card-icon" style="color:var(--cyan)">📊</div>
+      <h3>data.c/h · 数据管理层</h3>
+      <div class="module-lines">523 lines</div>
+      <p>定义 <code>Candle</code> (OHLCV) 和 <code>Dataset</code> 动态数组结构。CSV 解析器支持容错跳过、自动扩容 (2x策略)。<code>dataset_aggregate_to_period()</code> 将日线聚合为月线/季线。通用 <code>IndicatorSeries</code> 支持任意指标序列加载与时间匹配查询。</p>
+      <div class="module-tags"><span class="tag">CSV Parser</span><span class="tag">Dynamic Array</span><span class="tag">Period Aggregation</span></div>
+    </div>
+    <div class="module-card fade-in fade-in-d2">
+      <div class="module-card-icon" style="color:var(--purple)">🧮</div>
+      <h3>calculate.c/h · 数学引擎</h3>
+      <div class="module-lines">336 lines</div>
+      <p>两种回归模式：<strong>对数回归</strong> (log空间LSM → exp逆变换，适合长期趋势) 和<strong>线性回归</strong> (通达信风格，X从1开始)。计算 9 条通道线 (Center/±0.618σ/±1.0σ/±1.5σ/±2.0σ) 和标准差偏离度。<code>math_safe_log/exp</code> 防止数值溢出。</p>
+      <div class="module-tags"><span class="tag">Linear Regression</span><span class="tag">Log Regression</span><span class="tag">Std Deviation</span></div>
+    </div>
+    <div class="module-card fade-in fade-in-d1">
+      <div class="module-card-icon" style="color:var(--orange)">🎨</div>
+      <h3>chart.c/h · 可视化引擎</h3>
+      <div class="module-lines">847 lines</div>
+      <p>基于 raylib 的四图联排渲染：主K线 + 偏离度副图 + MVRV Z-Score + C-CVDD。支持对数/线性坐标切换，ScissorMode 裁剪优化。方向键缩放K线数量，鼠标点击切换日/月/季周期。启动自动截图PNG (1600×900)。</p>
+      <div class="module-tags"><span class="tag">raylib</span><span class="tag">Multi-Chart</span><span class="tag">PNG Export</span></div>
+    </div>
+    <div class="module-card fade-in fade-in-d2">
+      <div class="module-card-icon" style="color:var(--green)">🎯</div>
+      <h3>crosshair.c/h · 交互系统</h3>
+      <div class="module-lines">295 lines</div>
+      <p>双击检测 (300ms阈值) 切换十字线。悬浮信息框显示 16 行数据：日期、OHLC、7 条通道值、偏离度、MVRV、CVDD。竖线贯穿所有子图，横线在主图区域移动。</p>
+      <div class="module-tags"><span class="tag">Double Click</span><span class="tag">Info Panel</span><span class="tag">Crosshair</span></div>
+    </div>
+    <div class="module-card fade-in fade-in-d1">
+      <div class="module-card-icon" style="color:var(--red)">🔌</div>
+      <h3>network.c/h · Python 桥</h3>
+      <div class="module-lines">186 lines</div>
+      <p>通过 <code>system()</code> 调用 Python 数据脚本。支持 <code>--no-update</code> 和 <code>--no-save</code> 命令行参数。<code>export_csv_slice()</code> 导出CSV子集。协调 4 个 Python 脚本的执行流程。</p>
+      <div class="module-tags"><span class="tag">System Call</span><span class="tag">CLI Args</span><span class="tag">CSV Export</span></div>
+    </div>
+    <div class="module-card fade-in fade-in-d2">
+      <div class="module-card-icon" style="color:var(--cyan)">⚙️</div>
+      <h3>main.c · 主控逻辑</h3>
+      <div class="module-lines">445 lines</div>
+      <p>程序入口，菜单驱动界面 (4个选项)。多路径数据加载 (本地/网络/Python共享)。主渲染循环包含周期切换、缩放控制、自动保存逻辑。内存生命周期管理确保无泄漏。</p>
+      <div class="module-tags"><span class="tag">Entry Point</span><span class="tag">Menu</span><span class="tag">Render Loop</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- SECTION: DATA FLOW -->
+<section id="flow">
+  <div class="section-header fade-in">
+    <div class="section-tag">Data Pipeline</div>
+    <h2 class="section-title">数据流架构</h2>
+    <p class="section-desc">从交易所到像素的完整数据管道：Python 采集 → C 加载 → 数学计算 → raylib 渲染。</p>
+  </div>
+  <div class="flow-container fade-in fade-in-d1">
+    <div class="flow-diagram">
+      <div class="flow-node python">Gate.io API<small class="fn-sub">(主要数据源)</small></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node python">OKX API<small class="fn-sub">(备用数据源)</small></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node data">BTC Daily<small class="fn-sub">3,449 bars</small></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node python">Bitcoin Mag Pro<small class="fn-sub">Playwright</small></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node data">MVRV / CVDD<small class="fn-sub">On-chain</small></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node calc">Regression<small class="fn-sub">9 Channel Lines</small></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node vis">raylib Render<small class="fn-sub">K-Line + 4 Charts</small></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node data">PNG Export<small class="fn-sub">1600×900</small></div>
+    </div>
+  </div>
+  <div style="margin-top:1.5rem; display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:0.75rem;">
+    <div style="background:var(--bg-card); border-radius:var(--radius-sm); padding:1rem; border:1px solid rgba(247,147,26,0.06);">
+      <div style="font-size:0.7rem; color:var(--text-muted); font-weight:600; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:0.3rem;">源 1</div>
+      <div style="font-size:0.85rem; color:var(--text-primary); font-weight:600;">Gate.io</div>
+      <div style="font-size:0.72rem; color:var(--text-secondary);">国内可直连 · 全量历史分页拉取 · SSL降级</div>
+    </div>
+    <div style="background:var(--bg-card); border-radius:var(--radius-sm); padding:1rem; border:1px solid rgba(247,147,26,0.06);">
+      <div style="font-size:0.7rem; color:var(--text-muted); font-weight:600; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:0.3rem;">源 2</div>
+      <div style="font-size:0.85rem; color:var(--text-primary); font-weight:600;">OKX</div>
+      <div style="font-size:0.72rem; color:var(--text-secondary);">Gate.io 备用 · 增量补充最新数据</div>
+    </div>
+    <div style="background:var(--bg-card); border-radius:var(--radius-sm); padding:1rem; border:1px solid rgba(247,147,26,0.06);">
+      <div style="font-size:0.7rem; color:var(--text-muted); font-weight:600; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:0.3rem;">链上指标</div>
+      <div style="font-size:0.85rem; color:var(--text-primary); font-weight:600;">Bitcoin Magazine Pro</div>
+      <div style="font-size:0.72rem; color:var(--text-secondary);">Playwright 浏览器自动化 · Plotly 数据提取</div>
+    </div>
+    <div style="background:var(--bg-card); border-radius:var(--radius-sm); padding:1rem; border:1px solid rgba(247,147,26,0.06);">
+      <div style="font-size:0.7rem; color:var(--text-muted); font-weight:600; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:0.3rem;">增量更新</div>
+      <div style="font-size:0.85rem; color:var(--text-primary); font-weight:600;">全链路增量检测</div>
+      <div style="font-size:0.72rem; color:var(--text-secondary);">输入日期对比 · 有更新才计算 · 避免重复</div>
+    </div>
+  </div>
+</section>
+
+<!-- SECTION: HIGHLIGHTS -->
+<section id="highlights">
+  <div class="section-header fade-in">
+    <div class="section-tag">Evaluation</div>
+    <h2 class="section-title">技术评价</h2>
+    <p class="section-desc">项目亮点与可改进之处的客观分析。</p>
+  </div>
+  <div class="highlights-grid">
+    <div class="highlight-card good fade-in fade-in-d1">
+      <h4><span class="hc-icon">✦</span> 设计亮点</h4>
+      <ul>
+        <li><strong>C/Python 混合架构</strong> — C 引擎负责图形渲染和数学计算，Python 负责灵活的数据采集</li>
+        <li><strong>双数据源互备</strong> — Gate.io + OKX 双重保障，Gate.io 国内可直连</li>
+        <li><strong>全链路增量更新</strong> — 所有脚本均按日期检测，只拉取/计算新数据</li>
+        <li><strong>通达信兼容</strong> — 线性回归公式与通达信软件一致，X 从 1 开始编号</li>
+        <li><strong>极致性能</strong> — 毫秒级启动，~5-10MB 内存占用，~200KB 二进制体积</li>
+        <li><strong>多周期切换</strong> — 运行时点击切换日线/月线/季线，自动重新计算通道</li>
+      </ul>
+    </div>
+    <div class="highlight-card warn fade-in fade-in-d2">
+      <h4><span class="hc-icon">⚡</span> 可改进处</h4>
+      <ul>
+        <li><strong>无单元测试</strong> — 整个项目没有任何测试文件</li>
+        <li><strong>system() 调用脆弱</strong> — Python 进程通过 system() 启动，无错误传递和状态反馈</li>
+        <li><strong>硬编码路径</strong> — 多处硬编码 Windows 路径 (C:\raylib, D:\openskills)</li>
+        <li><strong>无配置系统</strong> — 所有参数 (窗口大小、颜色、数据路径) 编译时硬编码</li>
+        <li><strong>单线程渲染</strong> — raylib 渲染循环运行在主线程，大数据量时可能掉帧</li>
+        <li><strong>Python 依赖</strong> — 数据更新依赖 Python 环境 + Playwright + requests</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- SECTION: PIPELINE DETAIL -->
+<section id="pipeline">
+  <div class="section-header fade-in">
+    <div class="section-tag">Python Pipeline</div>
+    <h2 class="section-title">数据管道脚本详解</h2>
+    <p class="section-desc">4 个 Python 脚本构成完整的数据 ETL 管线。</p>
+  </div>
+  <div class="table-wrap fade-in fade-in-d1">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:28%">Script</th>
+          <th style="width:32%">Function</th>
+          <th style="width:20%">Data Source</th>
+          <th style="width:20%">Lines</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>update_data.py</td>
+          <td>BTC 日线增量更新 · 分页拉取全量历史 · 多源切换</td>
+          <td>Gate.io / OKX API</td>
+          <td>286</td>
+        </tr>
+        <tr>
+          <td>update_indicators.py</td>
+          <td>MVRV Z-Score + CVDD 链上指标 · Plotly 数据提取</td>
+          <td>Bitcoin Magazine Pro</td>
+          <td>259</td>
+        </tr>
+        <tr>
+          <td>compute_close_minus_cvdd.py</td>
+          <td>Close - CVDD 偏离百分比 · 负值取绝对值缩小</td>
+          <td>本地 CSV</td>
+          <td>168</td>
+        </tr>
+        <tr>
+          <td>compute_cmcvdd_percentile.py</td>
+          <td>C-CVDD 历史百分位 · 双指针同值处理</td>
+          <td>本地 TXT</td>
+          <td>158</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- SECTION: RELATION -->
+<section>
+  <div class="section-header fade-in">
+    <div class="section-tag">Project Relations</div>
+    <h2 class="section-title">项目血缘关系</h2>
+  </div>
+  <div class="relation-box fade-in fade-in-d1">
+    <p>
+      <strong>BTC/</strong> (Python 原型) 是 BTC-C 的前身，使用 Matplotlib + Pandas 实现基础 K 线和回归通道分析。
+      <strong>BTC-C</strong> 是完整的 C 语言重写+增强版：将可视化从 matplotlib 迁移到 raylib 硬件加速渲染，
+      增加链上指标 (MVRV Z-Score, CVDD) 系统，支持多周期切换 (日/月/季线)，
+      引入 Python 数据管道实现自动更新。
+      性能提升：启动时间从 ~2-3s 降至毫秒级，内存占用从 100MB+ 降至 5-10MB。
+    </p>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div style="font-family:'Outfit',sans-serif; font-weight:600; color:var(--orange);">BTC-C</div>
+  <div style="margin-top:0.3rem;">Analysis Report · Generated by AI</div>
+  <div style="margin-top:0.2rem;">D:\openskills\BTC-C · github.com/lmhopen/btc_analysis</div>
+</footer>
+
+<script>
+// Intersection Observer for fade-in
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('visible');
+    }
+  });
+}, { threshold: 0.1 });
+
+document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+
+// Set ticker data from CSV metadata
+document.getElementById('ticker-date').textContent = '2026-06-11';
+document.getElementById('ticker-price').textContent = '$62,914.50';
+document.getElementById('ticker-records').textContent = '3,449';
+</script>
+
+</body>
+</html>

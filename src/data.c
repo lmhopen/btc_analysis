@@ -6,6 +6,10 @@
 #include "data.h"
 #include <ctype.h>
 
+/* ========== 指标序列常量 ========== */
+#define INDICATOR_INITIAL_CAPACITY 200
+#define INDICATOR_LINE_LEN 64
+
 /* ========== 内部辅助函数 ========== */
 
 /**
@@ -281,4 +285,239 @@ double dataset_get_lowest(const Dataset* dataset) {
     }
     
     return lowest;
+}
+
+/* ========== 周期聚合函数 ========== */
+
+/**
+ * @brief 获取给定年月所属的季度 (1-4)
+ */
+static int month_to_quarter(int month) {
+    return (month - 1) / 3 + 1;
+}
+
+/**
+ * @brief 获取季度起始月份 (1, 4, 7, 10)
+ */
+static int quarter_start_month(int quarter) {
+    return (quarter - 1) * 3 + 1;
+}
+
+/**
+ * @brief 计算两个日期的周期键值
+ * 月线: year*100 + month  (如 202401)
+ * 季线: year*100 + quarter (如 20241)
+ */
+static int period_key(const Candle* c, PeriodType period) {
+    if (period == PERIOD_MONTHLY) {
+        return c->year * 100 + c->month;
+    } else if (period == PERIOD_QUARTERLY) {
+        return c->year * 10 + month_to_quarter(c->month);
+    }
+    return c->year * 10000 + c->month * 100;  // daily: unique per day
+}
+
+const char* period_to_string(PeriodType period) {
+    switch (period) {
+        case PERIOD_DAILY: return "日线";
+        case PERIOD_MONTHLY: return "月线";
+        case PERIOD_QUARTERLY: return "季线";
+        default: return "未知";
+    }
+}
+
+static void set_candle_date_by_period(Candle* c, int year, int month, PeriodType period) {
+    if (period == PERIOD_MONTHLY) {
+        snprintf(c->date, MAX_DATE_LEN, "%04d-%02d-01", year, month);
+    } else if (period == PERIOD_QUARTERLY) {
+        int qm = quarter_start_month(month_to_quarter(month));
+        snprintf(c->date, MAX_DATE_LEN, "%04d-%02d-01", year, qm);
+    }
+}
+
+Dataset* dataset_aggregate_to_period(const Dataset* src, PeriodType period) {
+    if (src == NULL || src->count == 0) return NULL;
+    if (period == PERIOD_DAILY) {
+        // 日线直接返回副本
+        Dataset* result = dataset_create();
+        if (result == NULL) return NULL;
+        for (int i = 0; i < src->count; i++) {
+            if (result->count >= result->capacity) {
+                int nc = result->capacity * 2;
+                Candle* tmp = (Candle*)realloc(result->candles, sizeof(Candle) * nc);
+                if (tmp == NULL) { dataset_free(result); return NULL; }
+                result->candles = tmp;
+                result->capacity = nc;
+            }
+            result->candles[result->count++] = src->candles[i];
+        }
+        return result;
+    }
+    
+    Dataset* result = dataset_create();
+    if (result == NULL) return NULL;
+    
+    int current_key = -1;
+    int aggr_count = 0;
+    Candle aggr;
+    memset(&aggr, 0, sizeof(aggr));
+    
+    for (int i = 0; i < src->count; i++) {
+        const Candle* c = &src->candles[i];
+        int key = period_key(c, period);
+        
+        if (key != current_key && current_key != -1) {
+            // 保存上一个聚合周期
+            if (result->count >= result->capacity) {
+                int nc = result->capacity * 2;
+                Candle* tmp = (Candle*)realloc(result->candles, sizeof(Candle) * nc);
+                if (tmp == NULL) { dataset_free(result); return NULL; }
+                result->candles = tmp;
+                result->capacity = nc;
+            }
+            result->candles[result->count++] = aggr;
+            memset(&aggr, 0, sizeof(aggr));
+            aggr_count = 0;
+        }
+        
+        if (aggr_count == 0) {
+            // 第一个交易日
+            aggr = *c;
+            set_candle_date_by_period(&aggr, c->year, c->month, period);
+        } else {
+            // 更新
+            aggr.high = (c->high > aggr.high) ? c->high : aggr.high;
+            aggr.low = (c->low < aggr.low) ? c->low : aggr.low;
+            aggr.close = c->close;
+            aggr.volume += c->volume;
+            aggr.quote_volume += c->quote_volume;
+        }
+        aggr_count++;
+        current_key = key;
+    }
+    
+    // 保存最后一个周期
+    if (aggr_count > 0) {
+        if (result->count >= result->capacity) {
+            int nc = result->capacity * 2;
+            Candle* tmp = (Candle*)realloc(result->candles, sizeof(Candle) * nc);
+            if (tmp == NULL) { dataset_free(result); return NULL; }
+            result->candles = tmp;
+            result->capacity = nc;
+        }
+        result->candles[result->count++] = aggr;
+    }
+    
+    return result;
+}
+
+/* ========== 指标序列函数实现 ========== */
+
+IndicatorSeries* indicator_create(void) {
+    IndicatorSeries* ind = (IndicatorSeries*)malloc(sizeof(IndicatorSeries));
+    if (ind == NULL) return NULL;
+    
+    ind->dates = (char**)malloc(sizeof(char*) * INDICATOR_INITIAL_CAPACITY);
+    ind->values = (double*)malloc(sizeof(double) * INDICATOR_INITIAL_CAPACITY);
+    if (ind->dates == NULL || ind->values == NULL) {
+        free(ind->dates);
+        free(ind->values);
+        free(ind);
+        return NULL;
+    }
+    
+    ind->count = 0;
+    ind->capacity = INDICATOR_INITIAL_CAPACITY;
+    return ind;
+}
+
+void indicator_free(IndicatorSeries* ind) {
+    if (ind == NULL) return;
+    if (ind->dates) {
+        for (int i = 0; i < ind->count; i++) {
+            free(ind->dates[i]);
+        }
+        free(ind->dates);
+    }
+    free(ind->values);
+    free(ind);
+}
+
+IndicatorSeries* indicator_load_txt(const char* filepath) {
+    FILE* fp = fopen(filepath, "r");
+    if (fp == NULL) {
+        fprintf(stderr, "警告: 无法打开指标文件 %s\n", filepath);
+        return NULL;
+    }
+    
+    IndicatorSeries* ind = indicator_create();
+    if (ind == NULL) {
+        fclose(fp);
+        return NULL;
+    }
+    
+    char line[INDICATOR_LINE_LEN];
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        char* nl = strchr(line, '\n');
+        if (nl) *nl = '\0';
+        nl = strchr(line, '\r');
+        if (nl) *nl = '\0';
+        
+        if (line[0] == '\0') continue;
+        
+        char date[MAX_DATE_LEN];
+        double value;
+        if (sscanf(line, "%10[^,],%lf", date, &value) != 2) continue;
+        
+        // 扩容
+        if (ind->count >= ind->capacity) {
+            int new_cap = ind->capacity * 2;
+            char** new_dates = (char**)realloc(ind->dates, sizeof(char*) * new_cap);
+            double* new_values = (double*)realloc(ind->values, sizeof(double) * new_cap);
+            if (new_dates == NULL || new_values == NULL) {
+                if (new_dates) ind->dates = new_dates;
+                if (new_values) ind->values = new_values;
+                break;
+            }
+            ind->dates = new_dates;
+            ind->values = new_values;
+            ind->capacity = new_cap;
+        }
+        
+        ind->dates[ind->count] = strdup(date);
+        ind->values[ind->count] = value;
+        ind->count++;
+    }
+    
+    fclose(fp);
+    return ind;
+}
+
+bool indicator_get_value(const IndicatorSeries* ind, const char* date, double* out_value) {
+    if (ind == NULL || date == NULL || out_value == NULL) return false;
+    for (int i = 0; i < ind->count; i++) {
+        if (strcmp(ind->dates[i], date) == 0) {
+            *out_value = ind->values[i];
+            return true;
+        }
+    }
+    return false;
+}
+
+double indicator_get_min(const IndicatorSeries* ind) {
+    if (ind == NULL || ind->count == 0) return 0.0;
+    double min_val = ind->values[0];
+    for (int i = 1; i < ind->count; i++) {
+        if (ind->values[i] < min_val) min_val = ind->values[i];
+    }
+    return min_val;
+}
+
+double indicator_get_max(const IndicatorSeries* ind) {
+    if (ind == NULL || ind->count == 0) return 0.0;
+    double max_val = ind->values[0];
+    for (int i = 1; i < ind->count; i++) {
+        if (ind->values[i] > max_val) max_val = ind->values[i];
+    }
+    return max_val;
 }

@@ -20,7 +20,7 @@ Crosshair* crosshair_create(void) {
         return NULL;
     }
     
-    ch->enabled = false;
+    ch->enabled = true;   // 默认开启十字光标，双击可切换
     ch->x_index = 0;
     ch->y_price = 0.0;
     ch->mouse_pos = (Vector2){ 0, 0 };
@@ -45,12 +45,24 @@ void crosshair_update(Crosshair* ch, const ChartCoords* coords) {
     // 获取鼠标位置
     ch->mouse_pos = GetMousePosition();
     
-    // 检查鼠标是否在图表区域内
-    Rectangle main_rect = coords->main_rect;
-    ch->in_chart = (ch->mouse_pos.x >= main_rect.x &&
-                    ch->mouse_pos.x <= main_rect.x + main_rect.width &&
-                    ch->mouse_pos.y >= main_rect.y &&
-                    ch->mouse_pos.y <= main_rect.y + main_rect.height);
+    // 检查鼠标是否在图表区域内（主图+所有副图）
+    float chart_left = coords->main_rect.x;
+    float chart_right = coords->main_rect.x + coords->main_rect.width;
+    float chart_top = coords->main_rect.y;
+    float chart_bottom = coords->main_rect.y + coords->main_rect.height;
+    if (coords->sub_rect.height > 0) {
+        chart_bottom = coords->sub_rect.y + coords->sub_rect.height;
+    }
+    if (coords->mvrv_rect.height > 0) {
+        chart_bottom = coords->mvrv_rect.y + coords->mvrv_rect.height;
+    }
+    if (coords->cmcvdd_rect.height > 0) {
+        chart_bottom = coords->cmcvdd_rect.y + coords->cmcvdd_rect.height;
+    }
+    ch->in_chart = (ch->mouse_pos.x >= chart_left &&
+                    ch->mouse_pos.x <= chart_right &&
+                    ch->mouse_pos.y >= chart_top &&
+                    ch->mouse_pos.y <= chart_bottom);
     
     // 处理双击
     if (crosshair_check_double_click(ch)) {
@@ -96,15 +108,22 @@ void crosshair_draw(const Crosshair* ch, const ChartCoords* coords) {
     }
     
     float x = ch->mouse_pos.x;
-    DrawLine(x, coords->main_rect.y, 
-             x, coords->main_rect.y + coords->main_rect.height,
-             COLOR_CROSSHAIR);
-    
+    // 竖线：从主图顶部到底部
+    float top_y = coords->main_rect.y;
+    float bottom_y = coords->main_rect.y + coords->main_rect.height;
+    // 如果有偏离度副图，延伸到底部
     if (coords->sub_rect.height > 0) {
-        DrawLine(x, coords->sub_rect.y,
-                 x, coords->sub_rect.y + coords->sub_rect.height,
-                 COLOR_CROSSHAIR);
+        bottom_y = coords->sub_rect.y + coords->sub_rect.height;
     }
+    // 如果有 MVRV 副图，继续延伸
+    if (coords->mvrv_rect.height > 0) {
+        bottom_y = coords->mvrv_rect.y + coords->mvrv_rect.height;
+    }
+    // 如果有 C-CVDD 副图，继续延伸到底部
+    if (coords->cmcvdd_rect.height > 0) {
+        bottom_y = coords->cmcvdd_rect.y + coords->cmcvdd_rect.height;
+    }
+    DrawLine(x, top_y, x, bottom_y, COLOR_CROSSHAIR);
     
     float y = ch->mouse_pos.y;
     DrawLine(coords->main_rect.x, y,
@@ -131,10 +150,12 @@ void crosshair_draw(const Crosshair* ch, const ChartCoords* coords) {
     DrawText(price_label, label_x + 5, label_y + 3, font_size, WHITE);
 }
 
-void crosshair_get_info(int index,
-                        const Dataset* dataset,
-                        const RegressionChannel* channel,
-                        InfoBox* info) {
+void crosshair_get_info_ex(int index,
+                           const Dataset* dataset,
+                           const RegressionChannel* channel,
+                           const IndicatorSeries* mvrv,
+                           const IndicatorSeries* cmcvdd,
+                           InfoBox* info) {
     if (index < 0 || index >= dataset->count || info == NULL) {
         return;
     }
@@ -157,71 +178,118 @@ void crosshair_get_info(int index,
         sprintf(info->lower_2_0, "-2.0s: $%.2f", channel->lower_2_0[index]);
         sprintf(info->deviation, "Deviation: %+.2fs", channel->deviation[index]);
     }
+    
+    // 指标值
+    double val;
+    if (mvrv != NULL && indicator_get_value(mvrv, c->date, &val)) {
+        sprintf(info->mvrv, "MVRV: %.4f", val);
+    } else {
+        sprintf(info->mvrv, "MVRV: N/A");
+    }
+    if (cmcvdd != NULL && indicator_get_value(cmcvdd, c->date, &val)) {
+        sprintf(info->close_minus_cvdd, "C-CVDD: %.2f%%", val);
+    } else {
+        sprintf(info->close_minus_cvdd, "C-CVDD: N/A");
+    }
 }
 
-void crosshair_draw_info(const Crosshair* ch,
-                         const Dataset* dataset,
-                         const RegressionChannel* channel,
-                         const ChartCoords* coords) {
+void crosshair_get_info(int index,
+                        const Dataset* dataset,
+                        const RegressionChannel* channel,
+                        InfoBox* info) {
+    crosshair_get_info_ex(index, dataset, channel, NULL, NULL, info);
+}
+
+void crosshair_draw_info_ex(const Crosshair* ch,
+                           const Dataset* dataset,
+                           const RegressionChannel* channel,
+                           const IndicatorSeries* mvrv,
+                           const IndicatorSeries* cmcvdd,
+                           const ChartCoords* coords) {
     if (ch == NULL || !ch->enabled || !ch->in_chart) {
         return;
     }
     
     InfoBox info;
     memset(&info, 0, sizeof(info));
-    crosshair_get_info(ch->x_index, dataset, channel, &info);
+    crosshair_get_info_ex(ch->x_index, dataset, channel, mvrv, cmcvdd, &info);
     
-    int screen_w = GetScreenWidth();
     int screen_h = GetScreenHeight();
     
-    int font_size = screen_h * 0.014;
-    int line_height = font_size + 4;
-    int box_width = screen_w * 0.11;
-    int box_padding = 8;
+    // 用更大的字体，统一黑色
+    int font_size = screen_h * 0.018;
+    int line_height = font_size + 6;
+    int box_width = screen_h * 0.16;
+    int box_padding = 10;
     
     int box_x = coords->main_rect.x + 15;
-    int box_y = coords->main_rect.y + coords->main_rect.height * 0.3;
-    int box_height = 16 * line_height;
+    int box_y = coords->main_rect.y + coords->main_rect.height * 0.25;
+    int total_lines = 16;
+    bool has_mvrv = mvrv != NULL && mvrv->count > 0;
+    bool has_cmcvdd = cmcvdd != NULL && cmcvdd->count > 0;
+    if (has_mvrv || has_cmcvdd) total_lines += 3;
     
-    DrawRectangle(box_x, box_y, box_width, box_height, COLOR_INFOBOX);
-    DrawRectangleLines(box_x, box_y, box_width, box_height, ((Color){ 100, 100, 100, 255 }));
+    int box_height = total_lines * line_height + box_padding * 2;
+    Color box_bg = { 255, 255, 230, 245 }; // 米白底
+    Color border_color = { 80, 80, 80, 200 };
+    
+    DrawRectangle(box_x, box_y, box_width, box_height, box_bg);
+    DrawRectangleLines(box_x, box_y, box_width, box_height, border_color);
     
     int text_y = box_y + box_padding;
-    DrawText(info.date, box_x + box_padding, text_y, font_size + 2, COLOR_TEXT_HIGHLIGHT);
+    DrawText(info.date, box_x + box_padding, text_y, font_size, BLACK);
     text_y += line_height;
     
-    DrawLine(box_x + 5, text_y, box_x + box_width - 5, text_y, ((Color){ 150, 150, 150, 255 }));
+    DrawLine(box_x + 5, text_y, box_x + box_width - 5, text_y, border_color);
     text_y += 6;
     
-    DrawText(info.open, box_x + box_padding, text_y, font_size, COLOR_TEXT);
+    DrawText(info.open, box_x + box_padding, text_y, font_size, BLACK);
     text_y += line_height;
-    DrawText(info.high, box_x + box_padding, text_y, font_size, COLOR_CANDLE_UP);
+    DrawText(info.high, box_x + box_padding, text_y, font_size, BLACK);
     text_y += line_height;
-    DrawText(info.low, box_x + box_padding, text_y, font_size, COLOR_CANDLE_DOWN);
+    DrawText(info.low, box_x + box_padding, text_y, font_size, BLACK);
     text_y += line_height;
-    DrawText(info.close, box_x + box_padding, text_y, font_size, COLOR_TEXT);
+    DrawText(info.close, box_x + box_padding, text_y, font_size, BLACK);
     text_y += line_height;
     
-    DrawLine(box_x + 5, text_y, box_x + box_width - 5, text_y, ((Color){ 150, 150, 150, 255 }));
+    DrawLine(box_x + 5, text_y, box_x + box_width - 5, text_y, border_color);
     text_y += 6;
     
-    DrawText(info.center, box_x + box_padding, text_y, font_size, COLOR_CENTER);
+    DrawText(info.center, box_x + box_padding, text_y, font_size, BLACK);
     text_y += line_height;
-    DrawText(info.upper_0618, box_x + box_padding, text_y, font_size, COLOR_SIGMA_0618);
+    DrawText(info.upper_0618, box_x + box_padding, text_y, font_size, BLACK);
     text_y += line_height;
-    DrawText(info.lower_0618, box_x + box_padding, text_y, font_size, COLOR_SIGMA_0618);
+    DrawText(info.lower_0618, box_x + box_padding, text_y, font_size, BLACK);
     text_y += line_height;
-    DrawText(info.upper_1_0, box_x + box_padding, text_y, font_size, COLOR_SIGMA_1_0);
+    DrawText(info.upper_1_0, box_x + box_padding, text_y, font_size, BLACK);
     text_y += line_height;
-    DrawText(info.lower_1_0, box_x + box_padding, text_y, font_size, COLOR_SIGMA_1_0);
+    DrawText(info.lower_1_0, box_x + box_padding, text_y, font_size, BLACK);
     text_y += line_height;
-    DrawText(info.upper_2_0, box_x + box_padding, text_y, font_size, COLOR_SIGMA_2_0);
+    DrawText(info.upper_2_0, box_x + box_padding, text_y, font_size, BLACK);
     text_y += line_height;
-    DrawText(info.lower_2_0, box_x + box_padding, text_y, font_size, COLOR_SIGMA_2_0);
+    DrawText(info.lower_2_0, box_x + box_padding, text_y, font_size, BLACK);
     text_y += line_height;
     
-    DrawLine(box_x + 5, text_y, box_x + box_width - 5, text_y, ((Color){ 150, 150, 150, 255 }));
+    DrawLine(box_x + 5, text_y, box_x + box_width - 5, text_y, border_color);
     text_y += 6;
     
-    DrawText(info.deviation, box_x + box_padding, text_y, font_size, ((Color){ 180, 100, 255, 255 }));
+    DrawText(info.deviation, box_x + box_padding, text_y, font_size, BLACK);
+    text_y += line_height;
+    
+    if (has_mvrv || has_cmcvdd) {
+        DrawLine(box_x + 5, text_y, box_x + box_width - 5, text_y, border_color);
+        text_y += 6;
+        
+        DrawText(info.mvrv, box_x + box_padding, text_y, font_size, BLACK);
+        text_y += line_height;
+        DrawText(info.close_minus_cvdd, box_x + box_padding, text_y, font_size, BLACK);
+        text_y += line_height;
+    }
+}
+
+void crosshair_draw_info(const Crosshair* ch,
+                         const Dataset* dataset,
+                         const RegressionChannel* channel,
+                         const ChartCoords* coords) {
+    crosshair_draw_info_ex(ch, dataset, channel, NULL, NULL, coords);
 }

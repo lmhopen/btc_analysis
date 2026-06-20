@@ -1,13 +1,14 @@
 /**
  * @file chart.h
- * @brief 图形绑制模块 - 使用raylib绑制K线图和通道线
+ * @brief 图形绘制模块 - 使用raylib绘制K线图和通道线
  * 
  * 该模块负责：
  * - 窗口初始化和管理
- * - K线图绑制
- * - 通道线绑制
+ * - K线图绘制
+ * - 通道线绘制
  * - 坐标轴和标签
  * - 对数坐标转换
+ * - 键盘缩放（方向键上/下控制显示数据条数）
  */
 
 #ifndef CHART_H
@@ -27,6 +28,10 @@
 #define SUB_CHART_HEIGHT 200
 #define SUB_CHART_GAP 50
 
+/* 缩放: 最少显示5条数据, 每次按键增减10条 */
+#define MIN_VIEW_COUNT 5
+#define ZOOM_STEP 10
+
 /* ========== 颜色定义 ========== */
 #define COLOR_BG         ((Color){ 20, 20, 30, 255 })
 #define COLOR_GRID       ((Color){ 50, 50, 60, 100 })
@@ -41,6 +46,8 @@
 #define COLOR_SIGMA_2_0  ((Color){ 148, 0, 211, 255 })     // purple
 #define COLOR_CROSSHAIR  ((Color){ 180, 180, 180, 200 })
 #define COLOR_INFOBOX    ((Color){ 255, 255, 200, 240 })
+#define COLOR_MVRV       ((Color){ 255, 165, 0, 255 })     // orange
+#define COLOR_CLOSE_MINUS_CVDD ((Color){ 0, 255, 200, 255 }) // teal
 
 /* ========== 数据结构 ========== */
 
@@ -50,15 +57,27 @@
 typedef struct {
     // 主图区域
     Rectangle main_rect;
-    // 副图区域
+    // 副图区域（偏离度）
     Rectangle sub_rect;
+    // MVRV Z-Score 副图
+    Rectangle mvrv_rect;
+    // Close-minus-CVDD 副图
+    Rectangle cmcvdd_rect;
     
     // 数据范围
-    int data_count;
+    int data_count;             // 显示的数据条数（= view_count）
+    int view_start;             // 在全量数据中的起始索引
     double price_min;
     double price_max;
     double dev_min;
     double dev_max;
+    
+    // MVRV 数据范围
+    double mvrv_min;
+    double mvrv_max;
+    // Close-minus-CVDD 数据范围
+    double cmcvdd_min;
+    double cmcvdd_max;
     
     // 对数坐标标志
     bool use_log_scale;
@@ -74,172 +93,98 @@ typedef struct {
     bool show_sub_chart;        // 显示副图
     
     // 视图参数
-    int view_start;             // 可见区域起始索引
-    int view_count;             // 可见数据数量
+    int view_count;             // 当前显示的数据条数（从最新开始）
     
     // 字体
     Font font;
     int font_size;
+    
+    // 周期切换
+    PeriodType current_period;  // 当前显示周期
+    Rectangle btn_daily;        // 日线按钮区域
+    Rectangle btn_monthly;      // 月线按钮区域
+    Rectangle btn_quarterly;    // 季线按钮区域
+    int period_switch_request;  // 请求切换的周期（-1表示无请求）
+    
+    // 指标数据（由外部加载，图表只引用不释放）
+    IndicatorSeries* mvrv;         // MVRV Z-Score
+    IndicatorSeries* cmcvdd;       // Close-minus-CVDD
 } ChartState;
 
 /* ========== 函数声明 ========== */
 
-/**
- * @brief 初始化图表
- * @return 图表状态指针
- */
 ChartState* chart_init(void);
-
-/**
- * @brief 关闭图表
- * @param state 图表状态指针
- */
 void chart_close(ChartState* state);
 
-/**
- * @brief 计算图表坐标
- * @param dataset 数据集
- * @param channel 回归通道
- * @param use_log 是否使用对数坐标
- * @return 坐标转换器
- */
 ChartCoords chart_calc_coords(const Dataset* dataset, 
                                const RegressionChannel* channel,
-                               bool use_log);
+                               bool use_log,
+                               const IndicatorSeries* mvrv,
+                               const IndicatorSeries* cmcvdd,
+                               int view_count);
 
-/**
- * @brief 绑制完整图表
- * @param state 图表状态
- * @param dataset 数据集
- * @param channel 回归通道
- * @param coords 坐标转换器
- */
 void chart_draw(ChartState* state, 
                 const Dataset* dataset,
                 const RegressionChannel* channel,
                 const ChartCoords* coords);
 
-/**
- * @brief 绑制K线
- * @param canvas 绘制目标
- * @param dataset 数据集
- * @param coords 坐标转换器
- * @param start_index 起始索引
- * @param count 数量
- */
 void chart_draw_candles(const Dataset* dataset,
                         const ChartCoords* coords,
                         int start_index, int count);
 
-/**
- * @brief 绑制通道线
- * @param channel 回归通道
- * @param coords 坐标转换器
- * @param count 数量
- */
 void chart_draw_channel_lines(const RegressionChannel* channel,
                                const ChartCoords* coords,
-                               int count);
+                               int start_index, int count);
 
-/**
- * @brief 绑制副图（偏离度）
- * @param channel 回归通道
- * @param coords 坐标转换器
- * @param count 数量
- */
 void chart_draw_sub_chart(const RegressionChannel* channel,
                           const ChartCoords* coords,
-                          int count);
+                          int start_index, int count);
 
-/**
- * @brief 绑制坐标轴和标签
- * @param dataset 数据集
- * @param coords 坐标转换器
- */
 void chart_draw_axes(const Dataset* dataset, const ChartCoords* coords);
 
-/**
- * @brief 绘制标题和信息
- * @param state 图表状态
- * @param dataset 数据集
- * @param channel 回归通道
- */
 void chart_draw_title_info(ChartState* state,
                            const Dataset* dataset,
-                           const RegressionChannel* channel);
+                           const RegressionChannel* channel,
+                           const ChartCoords* coords);
+
+void chart_draw_period_buttons(ChartState* state);
+
+int chart_handle_period_click(ChartState* state, Vector2 mouse_pos);
+
+void chart_zoom_in(ChartState* state);
+void chart_zoom_out(ChartState* state);
+
+void chart_draw_mvrv_subchart(const ChartCoords* coords,
+                              const IndicatorSeries* mvrv,
+                              const Dataset* dataset,
+                              int start_index, int count);
+
+void chart_draw_cmcvdd_subchart(const ChartCoords* coords,
+                                const IndicatorSeries* cmcvdd,
+                                const Dataset* dataset,
+                                int start_index, int count);
 
 /* ========== 坐标转换函数 ========== */
 
-/**
- * @brief 数据索引转X坐标
- * @param index 数据索引
- * @param coords 坐标转换器
- * @return X坐标（像素）
- */
 float chart_index_to_x(int index, const ChartCoords* coords);
-
-/**
- * @brief 价格转Y坐标（主图）
- * @param price 价格
- * @param coords 坐标转换器
- * @return Y坐标（像素）
- */
 float chart_price_to_y(double price, const ChartCoords* coords);
-
-/**
- * @brief 偏离度转Y坐标（副图）
- * @param deviation 偏离度
- * @param coords 坐标转换器
- * @return Y坐标（像素）
- */
 float chart_deviation_to_y(double deviation, const ChartCoords* coords);
-
-/**
- * @brief X坐标转数据索引
- * @param x X坐标（像素）
- * @param coords 坐标转换器
- * @return 数据索引
- */
 int chart_x_to_index(float x, const ChartCoords* coords);
-
-/**
- * @brief Y坐标转价格
- * @param y Y坐标（像素）
- * @param coords 坐标转换器
- * @return 价格
- */
 double chart_y_to_price(float y, const ChartCoords* coords);
 
 /* ========== 辅助绘制函数 ========== */
 
-/**
- * @brief 绘制网格
- * @param coords 坐标转换器
- */
 void chart_draw_grid(const ChartCoords* coords);
-
-/**
- * @brief 绘制矩形
- */
 void chart_draw_rect(float x, float y, float w, float h, Color color, float alpha);
-
-/**
- * @brief 绘制文本（带背景）
- */
 void chart_draw_text_box(const char* text, int x, int y, int font_size, 
                          Color text_color, Color bg_color);
 
-/**
- * @brief 保存图表为PNG图片（使用RenderTexture避免DPI问题）
- * @param dataset 数据集
- * @param channel 回归通道
- * @param use_log 是否使用对数坐标
- * @param filename 输出文件名
- * @return 成功返回true
- */
 bool chart_save_to_file(const Dataset* dataset,
                         const RegressionChannel* channel,
                         bool use_log,
-                        const char* filename);
+                        const char* filename,
+                        const IndicatorSeries* mvrv,
+                        const IndicatorSeries* cmcvdd,
+                        int view_count);
 
 #endif /* CHART_H */
