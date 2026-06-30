@@ -15,6 +15,7 @@
 import os
 import sys
 import asyncio
+import socket
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(script_dir)
@@ -26,6 +27,39 @@ CVDD_TXT = 'cvdd.txt'
 
 MVRV_URL = 'https://www.bitcoinmagazinepro.com/charts/mvrv-zscore/'
 CVDD_URL = 'https://www.bitcoinmagazinepro.com/charts/cvdd/'
+
+
+def detect_proxy():
+    """检测系统代理配置，返回 Playwright 可用的 proxy_server 字符串，或 None"""
+    # 1. 优先读取环境变量
+    for env_var in ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy']:
+        val = os.environ.get(env_var)
+        if val:
+            # 去掉协议前缀，保留 host:port
+            proxy = val.strip().rstrip('/')
+            for prefix in ['https://', 'HTTP://', 'http://']:
+                if proxy.startswith(prefix):
+                    proxy = proxy[len(prefix):]
+            print(f"  [代理] 从 {env_var} 检测到: {proxy}")
+            return proxy
+
+    # 2. 检测常见本地代理端口（Clash / V2Ray / Sing-box 等）
+    common_ports = [7890, 7891, 1080, 10808, 10809, 8080]
+    for port in common_ports:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.3)
+        try:
+            if s.connect_ex(('127.0.0.1', port)) == 0:
+                proxy_str = f'127.0.0.1:{port}'
+                print(f"  [代理] 检测到本地代理: {proxy_str}")
+                s.close()
+                return proxy_str
+            s.close()
+        except:
+            s.close()
+
+    print("  [代理] 未检测到代理配置，将直连")
+    return None
 
 
 def merge_and_save(new_pairs, csv_path, txt_path, header):
@@ -96,118 +130,149 @@ def merge_and_save(new_pairs, csv_path, txt_path, header):
     return len(sorted_items)
 
 
-async def fetch_mvrv_zscore():
-    """从 MVRV Z-Score 页面获取 Z-Score 数据"""
-    from playwright.async_api import async_playwright
+STEALTH_JS = '''
+// 隐藏 headless 浏览器特征
+Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+window.chrome = { runtime: {} };
+// 覆盖权限查询
+const originalQuery = navigator.permissions.query;
+navigator.permissions.query = (params) => (
+    params.name === 'notifications'
+        ? Promise.resolve({ state: 'denied' })
+        : originalQuery(params)
+);
+'''
 
-    print("\n--- 获取 MVRV Z-Score 数据 ---")
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=['--ignore-certificate-errors', '--no-sandbox']
-        )
-        page = await browser.new_page(viewport={'width': 1280, 'height': 800})
 
+async def fetch_with_playwright(url, trace_name, trace_key):
+    """通用函数：用 CloakBrowser 访问页面，提取指定 Plotly trace 数据
+
+    使用 CloakBrowser (stealth_args=True) 绕过 Cloudflare 防护，
+    持久化浏览器 profile 提高成功率。
+    """
+    from cloakbrowser import launch_persistent_context_async
+
+    proxy_server = detect_proxy()
+
+    # 持久化浏览器 profile 目录（复用 cookie/session，提高绕过成功率）
+    user_data_dir = os.path.join(script_dir, '.browser_profile')
+    os.makedirs(user_data_dir, exist_ok=True)
+
+    for attempt in range(2):
         try:
-            await page.goto(MVRV_URL, wait_until='networkidle', timeout=60000)
-            await page.wait_for_selector('.js-plotly-plot', timeout=30000)
-            await asyncio.sleep(5)
+            opts = {
+                "headless": True,
+                "stealth_args": True,
+                "viewport": {"width": 1920, "height": 1080},
+            }
+            if proxy_server:
+                opts["proxy"] = {"server": f"http://{proxy_server}"}
 
-            result = await page.evaluate('''() => {
-                var plotDiv = document.querySelector('.js-plotly-plot');
-                if (!plotDiv || !plotDiv._fullData) return {error: 'no data'};
-                var data = plotDiv._fullData;
+            context = await launch_persistent_context_async(user_data_dir, **opts)
 
-                var zscoreTrace = null;
-                for (var i = 0; i < data.length; i++) {
-                    if (data[i].name === 'Z-Score') zscoreTrace = data[i];
-                }
-                if (!zscoreTrace) return {error: 'no Z-Score trace'};
+            # 注入隐身 JS（补充 cloakbrowser 的 stealth_args）
+            await context.add_init_script(STEALTH_JS)
 
-                var pairs = [];
-                var x = zscoreTrace.x;
-                var y = zscoreTrace.y;
-                for (var i = 0; i < x.length && i < y.length; i++) {
-                    if (y[i] !== null && y[i] !== undefined) {
-                        var d = new Date(x[i]);
-                        var dateStr = d.getFullYear() + '-' +
-                            String(d.getMonth() + 1).padStart(2, '0') + '-' +
-                            String(d.getDate()).padStart(2, '0');
-                        pairs.push([dateStr, y[i]]);
-                    }
-                }
-                return {pairs: pairs, total: pairs.length};
-            }''')
+            pages = context.pages
+            page = pages[0] if pages else await context.new_page()
 
-            if 'error' in result:
-                print(f"  [失败] {result['error']}")
+            try:
+                # 先等 DOM，再等网络空闲（分开等，给 Cloudflare 挑战更多时间）
+                await page.goto(url, wait_until='domcontentloaded', timeout=60000)
+                await page.wait_for_load_state('networkidle', timeout=90000)
+                await asyncio.sleep(5)
+
+                try:
+                    await page.wait_for_selector('.js-plotly-plot',
+                                                 state='attached', timeout=30000)
+                except:
+                    # 没找到则尝试移除付费墙
+                    await page.evaluate('''
+                        document.querySelectorAll('.paywall, .paywall-msg-box')
+                            .forEach(el => el.remove());
+                    ''')
+                    await asyncio.sleep(3)
+                    try:
+                        await page.wait_for_selector('.js-plotly-plot',
+                                                     state='attached', timeout=15000)
+                    except:
+                        try:
+                            await page.screenshot(path=os.path.join(script_dir, 'debug.png'))
+                            print(f"  [调试] 页面截图已保存到 debug.png")
+                        except:
+                            pass
+                        return None
+
+                await asyncio.sleep(3)
+
+                result = await page.evaluate(f'''() => {{
+                    var plotDiv = document.querySelector('.js-plotly-plot');
+                    if (!plotDiv || !plotDiv._fullData) return {{error: 'no data'}};
+                    var data = plotDiv._fullData;
+
+                    var targetTrace = null;
+                    for (var i = 0; i < data.length; i++) {{
+                        if (data[i].name === '{trace_key}') targetTrace = data[i];
+                    }}
+                    if (!targetTrace) return {{error: 'no {trace_key} trace'}};
+
+                    var pairs = [];
+                    var x = targetTrace.x;
+                    var y = targetTrace.y;
+                    for (var i = 0; i < x.length && i < y.length; i++) {{
+                        if (y[i] !== null && y[i] !== undefined) {{
+                            var d = new Date(x[i]);
+                            var dateStr = d.getFullYear() + '-' +
+                                String(d.getMonth() + 1).padStart(2, '0') + '-' +
+                                String(d.getDate()).padStart(2, '0');
+                            pairs.push([dateStr, y[i]]);
+                        }}
+                    }}
+                    return {{pairs: pairs, total: pairs.length}};
+                }}''')
+
+                if 'error' in result:
+                    print(f"  [失败] {result['error']}")
+                    return None
+
+                print(f"  从网页获取 {result['total']} 条")
+                return result['pairs']
+
+            except Exception as e:
+                err_str = str(e)
+                if attempt == 0 and proxy_server and ('ERR_PROXY' in err_str or 'TIMED' in err_str.upper()):
+                    print(f"  [重试] 代理 {proxy_server} 不可用，将直连重试...")
+                    proxy_server = None
+                    continue
+                print(f"  [失败] {e}")
                 return None
+            finally:
+                try:
+                    await context.close()
+                except:
+                    pass
 
-            print(f"  从网页获取 {result['total']} 条")
-            return result['pairs']
-
-        except Exception as e:
-            print(f"  [失败] {e}")
+        except Exception as outer_e:
+            if attempt == 0:
+                print(f"  [重试] 第 1 次失败，10 秒后重试... ({outer_e})")
+                await asyncio.sleep(10)
+                continue
+            print(f"  [失败] {outer_e}")
             return None
-        finally:
-            await browser.close()
+
+    return None
+
+
+async def fetch_mvrv_zscore():
+    print("\n--- 获取 MVRV Z-Score 数据 ---")
+    return await fetch_with_playwright(MVRV_URL, 'MVRV Z-Score', 'Z-Score')
 
 
 async def fetch_cvdd():
-    """从 CVDD 页面获取 CVDD 数据"""
-    from playwright.async_api import async_playwright
-
     print("\n--- 获取 CVDD 数据 ---")
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=['--ignore-certificate-errors', '--no-sandbox']
-        )
-        page = await browser.new_page(viewport={'width': 1280, 'height': 800})
-
-        try:
-            await page.goto(CVDD_URL, wait_until='networkidle', timeout=60000)
-            await page.wait_for_selector('.js-plotly-plot', timeout=30000)
-            await asyncio.sleep(5)
-
-            result = await page.evaluate('''() => {
-                var plotDiv = document.querySelector('.js-plotly-plot');
-                if (!plotDiv || !plotDiv._fullData) return {error: 'no data'};
-                var data = plotDiv._fullData;
-
-                var cvddTrace = null;
-                for (var i = 0; i < data.length; i++) {
-                    if (data[i].name === 'CVDD') cvddTrace = data[i];
-                }
-                if (!cvddTrace) return {error: 'no CVDD trace'};
-
-                var pairs = [];
-                var x = cvddTrace.x;
-                var y = cvddTrace.y;
-                for (var i = 0; i < x.length && i < y.length; i++) {
-                    if (y[i] !== null && y[i] !== undefined) {
-                        var d = new Date(x[i]);
-                        var dateStr = d.getFullYear() + '-' +
-                            String(d.getMonth() + 1).padStart(2, '0') + '-' +
-                            String(d.getDate()).padStart(2, '0');
-                        pairs.push([dateStr, y[i]]);
-                    }
-                }
-                return {pairs: pairs, total: pairs.length};
-            }''')
-
-            if 'error' in result:
-                print(f"  [失败] {result['error']}")
-                return None
-
-            print(f"  从网页获取 {result['total']} 条")
-            return result['pairs']
-
-        except Exception as e:
-            print(f"  [失败] {e}")
-            return None
-        finally:
-            await browser.close()
+    return await fetch_with_playwright(CVDD_URL, 'CVDD', 'CVDD')
 
 
 def update_indicators():
