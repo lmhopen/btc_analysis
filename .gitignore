@@ -23,3 +23,6 @@ data/btc_historical_daily.txt
 data/btc_historical_monthly.txt
 data/__pycache__/
 data/update_data.py.bak
+
+# CloakBrowser profile
+data/.browser_profile/
